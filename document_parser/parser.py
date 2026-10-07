@@ -24,7 +24,10 @@ class DocumentParser:
         self.format_options = format_options
 
     def parse(self, path: str | Path, *, image_dir: str | Path | None = None,
-              password: str | None = None) -> DocumentModel:
+              password: str | None = None, unpack_dir: str | Path = 'unpacked',
+              cleanup: bool = True, recover_excluded: bool = True) -> DocumentModel:
+        # Compatibility with parser_service.parse: ZIPs stay in memory, all cells are retained.
+        # No directory is extracted/deleted and there are no excluded tables to recover.
         source = Path(path)
         suffix = source.suffix.lower()
         if suffix not in self.formats:
@@ -40,5 +43,7 @@ class DocumentParser:
 
 
 def parse(file_path: str | Path, *, image_dir: str | Path | None = None,
-          password: str | None = None, **format_options) -> DocumentModel:
-    return DocumentParser(**format_options).parse(file_path, image_dir=image_dir, password=password)
+          password: str | None = None, unpack_dir: str | Path = 'unpacked',
+          cleanup: bool = True, recover_excluded: bool = True, **format_options) -> DocumentModel:
+    return DocumentParser(**format_options).parse(file_path, image_dir=image_dir, password=password,
+        unpack_dir=unpack_dir, cleanup=cleanup, recover_excluded=recover_excluded)

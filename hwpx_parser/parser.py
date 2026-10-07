@@ -160,6 +160,11 @@ class _Reader:
             if path in seen:
                 raise HwpxParseError(f"Repeated spine item: {path}")
             seen.add(path)
+            # A spine can include Scripts/*.js. Never execute or parse those as XML.
+            mime = entries[ident].get("media-type", "").split(";", 1)[0].lower()
+            if not path.lower().endswith(".xml") and mime not in {"application/xml", "text/xml"} and not mime.endswith("+xml"):
+                self.diagnostic("unsupported_spine_item", path, severity="info", media_type=mime)
+                continue
             root = package.xml(path)
             if tag(root) == "sec":
                 sections.append((path, root))

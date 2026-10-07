@@ -64,16 +64,27 @@ chunked = chunk(parsed)
 | `structure/document.json` | 기존 추출 구조 전체: 페이지 근거, 수식, 서식, 진단, 자산 |
 | `structure/texts.*`, `tables.*`, `headings.*` | 텍스트/표/제목의 JSON 및 읽기용 결과 |
 | `structure/images.json`, `metadata.json` | 이미지 위치와 문서 메타데이터 |
-| `<문서 SHA-256>/images/` | 계약 객체가 참조하는 실제 이미지 파일 |
+| `<문서 stem>/images/` | 계약 객체가 참조하는 실제 이미지 파일 |
 
 `model.structure`는 포맷별 원본 구조 객체입니다. JSON 계약에는 추가하지 않습니다.
 표 안의 문단·그림·중첩 표는 `table.cells` 및 `table.children`에 넣어 본문 중복을 막습니다.
 제목 ID 경로는 실제 반환 블록 ID로 연결합니다. 시트명/PDF 목차에 독립 문단이 없으면
 제목 블록을 구성하여 기존 청킹 코드가 계층을 읽을 수 있게 합니다.
 행·열 좌표는 셀 객체에서 0부터, Markdown의 주소 표시에서는 1부터 셉니다.
-큰 XLSX 범위를 확장하지 않도록 Markdown은 희소 셀 주소 목록입니다.
-헤더·레코드·수치표 판정은 추측하지 않습니다. `numeric_verdict='판정불가'`,
-`row_records_available=False`, `kept_as=''`이며 원본 셀을 보존합니다.
+Markdown은 행·열 격자이며 병합 셀의 값을 덮인 위치에도 채웁니다.
+XLSX에서 행 수 × 열 수가 100,000을 넘는 표만 희소 셀 주소 목록으로 남기며
+헤더·레코드 추론을 생략합니다. 다른 포맷의 격자 크기는 1,000,000칸으로 제한합니다.
+기존 조직의 표 분류·헤더·레코드 안정성 규칙을 공통으로 적용합니다.
+제목상자는 `table.kind='제목상자'`, `table.title` 및 실제 제목 경로를 제공합니다.
+수치 판정은 헤더를 제외한 수치열 기준이며 근거가 없으면 `판정불가`입니다.
+표의 모든 셀을 보존하므로 구조를 확신하지 못한 표도 Markdown으로 청킹할 수 있습니다.
+헤더·제목 분류는 휴리스틱입니다. 기존 파이프라인의 전체 depth 보정과 모든 목차 표현을
+동일하게 재현하지는 않으며, 청크 개수·경계가 기존 결과와 같다는 보장은 없습니다.
+
+`parse(..., unpack_dir=..., cleanup=..., recover_excluded=...)`는 기존 서비스의
+키워드 호출을 허용합니다. 이 파서는 ZIP을 메모리에서 읽고 표를 제외하지 않으므로
+이 세 옵션은 파일 추출·삭제·복구를 실행하지 않습니다. `cleanup=False`로
+압축 해제 폴더를 얻을 수는 없으며, 원본 구조는 `model.structure`로 확인합니다.
 
 `image_dir`/`export()`를 사용하면 실제 이미지 경로와 `document_images` 목록을 제공합니다.
 같은 원본 그림의 반복 사용은 파일/목록을 공유하고 블록 위치는 각각 유지합니다.
@@ -124,7 +135,10 @@ $env:PYTHONUTF8 = '1'
 사용자 실제 HWPX 검사와 실제 OCR 모델 검사는 명시적인 환경변수가 있어야 실행합니다.
 조직 저장소 사본은 배포하지 않으며, `.reference/`가 있으면 원본 필드 정의와
 실제 청킹 코드에 네 포맷 결과를 전달하는 검사도 실행합니다.
+공통 표 처리에 필요한 기존 `table_hierarchy` 모듈 20개는 아래 커밋에서 재사용하여
+`document_parser/table_hierarchy`에 포함했습니다. 참조 저장소는 수정하지 않았습니다.
 
 - [DocumentModel 타입 원본 — HwpxParser_sub, 8056258](https://github.com/WsuRagDocumentAssistant/HwpxParser_sub/blob/8056258068dbef1afd46b657f824df6eabda5a7a/hwpx/analysis/document_model.py)
+- [표 분류·헤더·레코드 처리 원본 — HwpxParser_sub, 8056258](https://github.com/WsuRagDocumentAssistant/HwpxParser_sub/tree/8056258068dbef1afd46b657f824df6eabda5a7a/hwpx/analysis/table_hierarchy)
 - [실제 파서 수신 코드 — RagModuls, 541ee81](https://github.com/WsuRagDocumentAssistant/RagModuls/blob/541ee8116452723389b0778a3dfe689bb84a357d/ragmodul/service/parser_service.py)
 - [실제 청킹 소비 코드 — RagModuls, 541ee81](https://github.com/WsuRagDocumentAssistant/RagModuls/blob/541ee8116452723389b0778a3dfe689bb84a357d/ragmodul/service/chunker_service.py)

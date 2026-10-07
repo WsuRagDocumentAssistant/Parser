@@ -150,7 +150,8 @@ class IntegrationTests(unittest.TestCase):
         chunk = __import__('wsu_contract.service.chunker_service', fromlist=['chunk']).chunk
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            hwpx(root / 'sample.hwpx', para('제목', prop='1', extra=SETUP) + para('본문', extra=table()))
+            hwpx(root / 'sample.hwpx', para('', extra=SETUP + table('Ⅰ. 사업 개요')) + para('개요 본문') +
+                 para('', extra=table('Ⅱ. 추진 계획')) + para('계획 본문'))
             (root / 'sample.docx').write_bytes(docx(p('제목', properties='<w:outlineLvl w:val="0"/>') + p('본문')))
             xlsx(root / 'sample.xlsx')
             sources = list(root.iterdir()) + [ROOT / 'tests/pdf_parser/fixtures/sample.pdf']
@@ -160,6 +161,8 @@ class IntegrationTests(unittest.TestCase):
                     self.assertTrue(result.parents)
                     self.assertTrue(any(parent.children for parent in result.parents))
                     self.assertEqual(result.file.filename, source.name)
+                    if source.suffix == '.hwpx':
+                        self.assertGreaterEqual(len(result.parents), 2)
 
 
 if __name__ == '__main__':
