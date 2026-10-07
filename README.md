@@ -80,6 +80,13 @@ XLSX에서 행 수 × 열 수가 100,000을 넘는 표만 희소 셀 주소 목�
 표의 모든 셀을 보존하므로 구조를 확신하지 못한 표도 Markdown으로 청킹할 수 있습니다.
 헤더·제목 분류는 휴리스틱입니다. 기존 파이프라인의 전체 depth 보정과 모든 목차 표현을
 동일하게 재현하지는 않으며, 청크 개수·경계가 기존 결과와 같다는 보장은 없습니다.
+HWPX는 기존 조직의 문서 내 스타일 클러스터 규칙으로 문단의 글자 크기·굵기·
+빈도·길이·후행 블록을 비교하여 번호 없는 문단 제목도 찾습니다. 제목상자 아래의
+문단 제목은 `□`/`○` 등 마커와 개요 번호에 따라 계층을 보정합니다.
+번호·기호만 있는 일반 목록은 자동으로 제목으로 바꾸지 않습니다.
+자동 추론 제목은 공백 정리 후 120자 이하이고 문장 종결 부호가 없는 경우로 제한합니다.
+명시적 OUTLINE 및 사용자 스타일 매핑은 유지합니다. 제목과 제목 경로의 줄바꿈·
+연속 공백은 공백 하나로 정리하며, 원본 문단·셀 텍스트는 `model.structure`에 보존합니다.
 
 `parse(..., unpack_dir=..., cleanup=..., recover_excluded=...)`는 기존 서비스의
 키워드 호출을 허용합니다. 이 파서는 ZIP을 메모리에서 읽고 표를 제외하지 않으므로
@@ -140,5 +147,6 @@ $env:PYTHONUTF8 = '1'
 
 - [DocumentModel 타입 원본 — HwpxParser_sub, 8056258](https://github.com/WsuRagDocumentAssistant/HwpxParser_sub/blob/8056258068dbef1afd46b657f824df6eabda5a7a/hwpx/analysis/document_model.py)
 - [표 분류·헤더·레코드 처리 원본 — HwpxParser_sub, 8056258](https://github.com/WsuRagDocumentAssistant/HwpxParser_sub/tree/8056258068dbef1afd46b657f824df6eabda5a7a/hwpx/analysis/table_hierarchy)
+- [문단 스타일 클러스터 원본 — HwpxParser_sub, 8056258](https://github.com/WsuRagDocumentAssistant/HwpxParser_sub/blob/8056258068dbef1afd46b657f824df6eabda5a7a/hwpx/analysis/add_document_blocks_to_json.py)
 - [실제 파서 수신 코드 — RagModuls, 541ee81](https://github.com/WsuRagDocumentAssistant/RagModuls/blob/541ee8116452723389b0778a3dfe689bb84a357d/ragmodul/service/parser_service.py)
 - [실제 청킹 소비 코드 — RagModuls, 541ee81](https://github.com/WsuRagDocumentAssistant/RagModuls/blob/541ee8116452723389b0778a3dfe689bb84a357d/ragmodul/service/chunker_service.py)

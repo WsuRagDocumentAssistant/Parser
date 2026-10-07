@@ -8,10 +8,44 @@ from document_parser.adapter import ModelAdapter
 from document_parser.models import Cell
 from hwpx_parser import HwpxParser, HwpxParseError
 from hwpx_parser.models import Document, TableBlock, TextBlock, Cell as SourceCell
-from tests.hwpx_parser.test_parser import package, para, table, SETUP
+from tests.hwpx_parser.test_parser import package, para, table, SETUP, NS
 
 
 class SemanticsTests(unittest.TestCase):
+    def test_paragraph_style_titles_markers_whitespace_and_prose(self):
+        with tempfile.TemporaryDirectory() as directory:
+            header = (f'<hh:head {NS}><hh:refList><hh:paraProperties>'
+                      '<hh:paraPr id="0"><hh:heading type="NONE" level="0"/></hh:paraPr>'
+                      '</hh:paraProperties><hh:charProperties><hh:charPr id="0" height="1000"/>'
+                      '<hh:charPr id="1" height="1400"><hh:bold/></hh:charPr></hh:charProperties>'
+                      '<hh:styles><hh:style id="0" name="바탕글"/></hh:styles></hh:refList></hh:head>')
+            titles = ['□ 사업단 구성 및 운영계획', '○ 내부환경분석', '1) 학사구조 및 교육과정',
+                      '② 세부내용5: 스마트교육혁신플랫폼 구축', '2.2.2. 1차년도 사업비 비목별 구성',
+                      '【대학혁신지원사업 개요】', '세부과제명: 교수법 혁신 및 역량강화']
+            prose = '3. 적정규모화 계획 - 발전계획 및 최근 대학 미충원 현황 분석/진단에 따른 ' + '본문 설명을 보존합니다. ' * 12
+            body = para('', extra=SETUP + table('1 사업\n\n    추진'))
+            for title in titles:
+                body += para(title).replace('charPrIDRef="0"', 'charPrIDRef="1"')
+                body += para('일반 설명 문장을 전달합니다. ' * 8) * 3
+            body += para(prose).replace('charPrIDRef="0"', 'charPrIDRef="1"')
+            body += para('1) 일반 목록입니다.') + para('', extra=table(prose))
+            path = package(Path(directory) / 'styles.hwpx', body, replace={'Contents/header.xml': header})
+            model = parse(path)
+            headings = {b.text: b for b in model.blocks if b.role == '제목' and b.text}
+            self.assertTrue(set(titles) <= headings.keys())
+            self.assertNotIn(prose, headings)
+            self.assertNotIn('1) 일반 목록입니다.', headings)
+            self.assertEqual(headings[titles[1]].depth, headings[titles[0]].depth + 1)
+            self.assertTrue(any(b.text == prose and b.role == '본문' for b in model.blocks))
+            boxes = [b.table for b in model.blocks if b.table]
+            self.assertEqual(boxes[0].title, ['1 사업 추진'])
+            self.assertEqual(boxes[-1].kind, '데이터표')
+            self.assertIn(prose, boxes[-1].cells[0].text)
+            self.assertTrue(all('\n' not in text and '  ' not in text
+                                for b in model.blocks for text in b.heading_path_text))
+            raw = HwpxParser(auto_headings=False).parse(path)
+            self.assertEqual(len(raw.headings), 1)
+
     def test_scripts_are_skipped_but_invalid_section_xml_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             path = package(Path(directory) / 'script.hwpx', para('본문', extra=SETUP))

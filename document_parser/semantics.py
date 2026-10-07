@@ -3,6 +3,7 @@ import re
 from collections import defaultdict
 
 from .models import TocEntry, TocRef
+from hwpx_parser.headings import compact_title, is_title_text
 
 
 ROMAN = re.compile(r'^(?:[Ⅰ-Ⅻ]+|[IVXLCDM]+)(?:\s*[-–]\s*\d+)*[.)]?\s+\S')
@@ -41,8 +42,13 @@ def numeric_verdict(cells, table_type, header):
     return '아님'
 
 
-def restore_heading_paths(model):
+def restore_heading_paths(model, *, inferred_ids=()):
     """Title boxes are actual chunk boundaries; keep explicit format headings."""
+    for table in model.tables():
+        table.title = [compact_title(text) for text in table.title if compact_title(text)]
+    for block in model.blocks:
+        if block.role == '제목' and block.text:
+            block.text = compact_title(block.text)
     def title(block):
         return ' '.join(block.table.title) if block.table and block.table.kind == '제목상자' else block.text or ''
 
@@ -78,6 +84,7 @@ def restore_heading_paths(model):
 
     stack = []
     last_title_depth = 0
+    last_box_depth = None
     for block in model.blocks:
         if block.area != '본문':
             continue
@@ -85,12 +92,23 @@ def restore_heading_paths(model):
         box = block.table is not None and block.table.kind == '제목상자' and bool(block.table.title)
         toc_depth = toc_titles.get(re.sub(r'\s+', ' ', text))
         # Unstyled prose/list items are not promoted from numbering alone.
-        roman_paragraph = block.kind == '문단' and 0 < len(text) <= 120 and ROMAN.match(text)
+        roman_paragraph = block.kind == '문단' and is_title_text(text) and ROMAN.match(text)
         heading = block.role == '제목' or box or toc_depth is not None or roman_paragraph
         if heading and block.role != '목차':
             depth = outline_depth(text)
             if box and depth is not None or block.role != '제목':
                 block.depth = toc_depth if toc_depth is not None else depth if depth is not None else last_title_depth
+            if block.id in inferred_ids and last_box_depth is not None and not ROMAN.match(text):
+                # Existing HWPX correction anchors paragraph headings below the title box.
+                relative = 1
+                if text.startswith(('○', '◦', '●')):
+                    relative = 2
+                elif text.startswith(('-', '·', 'ㆍ')):
+                    relative = 3
+                block.depth = last_box_depth + relative
+                if match := NUMBERED.match(text):
+                    if len(re.split(r'[.-]', match[1])) > 1:
+                        block.depth = max(last_box_depth + 1, outline_depth(text))
             block.role = '제목'
             block.searchable = True
             if toc_depth is not None:
@@ -102,6 +120,10 @@ def restore_heading_paths(model):
             block.child_headings = []
             stack.append(block)
             last_title_depth = block.depth
+            if box:
+                last_box_depth = block.depth
+            elif ROMAN.match(text):
+                last_box_depth = None
         elif stack:
             block.depth = stack[-1].depth + 1
         block.heading_path = [b.id for b in stack]

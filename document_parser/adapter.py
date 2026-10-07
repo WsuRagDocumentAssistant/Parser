@@ -7,6 +7,7 @@ from .models import (Block, Cell, DocumentModel, Figure, FileInfo, ImageFile,
                      ImageRef, Table, TableParent, TableHeader, TableColumn, TableRecord)
 from .table_hierarchy.orchestrator import add_hierarchy_recursive
 from .semantics import numeric_verdict, restore_heading_paths
+from hwpx_parser.headings import compact_title, is_title_text
 
 
 class ModelAdapter:
@@ -81,6 +82,7 @@ class ModelAdapter:
                           row_span=cell.row_span, col_span=cell.col_span, text=cell.text,
                           images=cell.images, nested_tables=cell.child_tables)
                      for original, cell in zip(block.cells, cells)]
+        raw_cells.sort(key=lambda cell: (cell['row_addr'], cell['col_addr']))
         raw = dict(table_id=block.id, row_count=block.rows, col_count=block.columns,
                    cells=raw_cells, is_nested=parent is not None,
                    repeat_header=block.metadata.get('attributes', {}).get('repeatHeader'))
@@ -94,6 +96,10 @@ class ModelAdapter:
             add_hierarchy_recursive(raw)
             hierarchy = raw['hierarchy']
         table_type = hierarchy['table_type']
+        if table_type == 'title_box' and not is_title_text(' '.join(c.text for c in cells if c.text)):
+            # Preserve the full cells/Markdown; a long sentence is content, not a boundary.
+            table_type = hierarchy['table_type'] = 'data_table'
+            hierarchy['title_cells'] = []
         header = None
         columns = hierarchy.get('columns') or []
         if columns or hierarchy.get('header_rows') or hierarchy.get('header_cols'):
@@ -127,7 +133,8 @@ class ModelAdapter:
                 markdown = (markdown or "") + f"\n\n중첩 표 (행 {position.row + 1}, 열 {position.col + 1})\n" + child.markdown
         kind = {'title_box': '제목상자', 'key_value_table': '키값표',
                 'caption_or_note_table': '주석표', 'data_table': '데이터표'}[table_type]
-        titles = [c.text for original, c in zip(block.cells, cells) if original.id in hierarchy.get('title_cells', []) and c.text]
+        titles = [compact_title(c.text) for original, c in sorted(zip(block.cells, cells), key=lambda pair: (pair[1].row, pair[1].col))
+                  if original.id in hierarchy.get('title_cells', []) and c.text]
         result = Table(id=block.id, kind=kind, rows=block.rows,
                      cols=block.columns, numeric_verdict=verdict, numeric=verdict == '수치표', cells=cells,
                      title=titles, header=header, records=records,
@@ -259,7 +266,8 @@ class ModelAdapter:
                 emitted.add(heading.id)
             model.blocks.append(block)
         # Rich evidence remains available without adding fields to the organization's JSON schema.
-        restore_heading_paths(model)
+        restore_heading_paths(model, inferred_ids={h.block_id for h in self.headings.values()
+            if h.source == 'auto_style' and h.evidence.get('rule') == 'style_cluster'})
         model.structure = self.document
         model.document_images = []
         if image_dir is not None:

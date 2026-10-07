@@ -2,12 +2,23 @@ from collections.abc import Sequence
 import re
 
 from .models import Document, HeadingNode, TableBlock, TextBlock
+from .style_clusters import _build_style_clusters, _cluster_key_of
 
 
 ROMAN_STYLE = re.compile(r"(?:[IVXLCDM]+|[Ⅰ-Ⅻ]+)[.)]?")
 NUMBERED_STYLE = re.compile(r"(\d+(?:[.-]\d+)*)(?:[.)])?(?:\s+제목(?:\s+\d+)?)?")
 NAMED_STYLE = re.compile(r"(heading|제목|outline|개요)\s*(\d*)", re.IGNORECASE)
 NUMBER_ONLY = re.compile(r"\s*\d+(?:[-.]\d+)*[.)]?\s*")
+
+
+def compact_title(text: str) -> str:
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def is_title_text(text: str) -> bool:
+    """Guard inferred titles, without truncating the original body text."""
+    text = compact_title(text)
+    return bool(text and len(text) <= 120 and not re.search(r'[.!?。！？]$', text))
 
 
 class HeadingBuilder:
@@ -66,12 +77,71 @@ class HeadingBuilder:
                 break
         return inferred
 
+    @staticmethod
+    def _style_headings(document: Document) -> dict[str, dict]:
+        """Use the organization's body/style baseline, not style names alone."""
+        def find(record, name):
+            if record.get('tag') == name:
+                return record.get('attributes', {})
+            for child in record.get('children', []):
+                if result := find(child, name):
+                    return result
+            return {}
+
+        paragraphs = document.metadata.get('paragraph_properties', {})
+        characters = document.metadata.get('character_properties', {})
+        records = []
+        for block in document.blocks:
+            if block.scope != 'body':
+                continue
+            if not isinstance(block, TextBlock):
+                records.append({'block_type': block.kind})
+                continue
+            para = paragraphs.get(block.metadata.get('paragraph_property_id'), {})
+            total = bold = 0
+            sizes = []
+            for run in block.runs:
+                length = max(0, run['end'] - run['start'])
+                char = characters.get(run.get('char_property_id'), {})
+                total += length
+                if any(c.get('tag') == 'bold' for c in char.get('children', [])):
+                    bold += length
+                height = char.get('attributes', {}).get('height')
+                try:
+                    if length and height is not None:
+                        sizes.append(int(height) / 100)
+                except (TypeError, ValueError):
+                    pass
+            sf = dict(style_id_ref=block.metadata.get('style_id'),
+                      para_pr_id_ref=block.metadata.get('paragraph_property_id'),
+                      font_size=max(sizes, default=None), bold_ratio=bold / total if total else 0,
+                      alignment=find(para, 'align').get('horizontal'))
+            for key, tag in [('indent', 'intent'), ('margin_left', 'left')]:
+                try:
+                    sf[key] = int(find(para, tag).get('value'))
+                except (TypeError, ValueError):
+                    sf[key] = None
+            records.append(dict(block_type='paragraph', text_content=block.text,
+                                style_features=sf, block_id=block.id))
+        stats = _build_style_clusters(records)
+        document.metadata['heading_style_clusters'] = stats['report']
+        candidates = {}
+        for record in records:
+            if record['block_type'] != 'paragraph':
+                continue
+            sf = record['style_features']
+            info = stats['cluster_info_of'].get(_cluster_key_of(sf), {})
+            if info.get('cluster_role_candidate') == 'section_heading' and is_title_text(record['text_content']):
+                candidates[record['block_id']] = dict(info, font_size=sf['font_size'], bold_ratio=sf['bold_ratio'])
+        return candidates
+
     def build(self, document: Document) -> None:
         root = HeadingNode("root", "", 0, 0, None)
         document.headings = [root]
         stack = [root]
         pending = None
         automatic = self._automatic_styles(document) if self.auto_detect else {}
+        style_headings = self._style_headings(document) if self.auto_detect else {}
         numbered_level = 0
         cells = {
             cell.id: (block.id, cell.row, cell.column, cell.col_span)
@@ -120,7 +190,7 @@ class HeadingBuilder:
                 if (level is None and key is None and self.auto_detect
                         and heading.get("type") not in {"NUMBER", "BULLET", "OUTLINE"}):
                     inferred = automatic.get(block.metadata.get("style_id"))
-                    if inferred is not None:
+                    if inferred is not None and is_title_text(block.text):
                         name, rule, inferred_level = inferred
                         # ponytail: style conventions are heuristics; a semantic classifier
                         # is needed for unstyled titles and ambiguous list/heading styles.
@@ -133,6 +203,13 @@ class HeadingBuilder:
                             source = "auto_style"
                             evidence = {"classification": "heuristic", "rule": rule,
                                         "style_name": name, "style_id": block.metadata.get("style_id")}
+                if (level is None and key is None and self.auto_detect and block.scope == 'body'
+                        and heading.get('type') not in {'NUMBER', 'BULLET', 'OUTLINE'}):
+                    candidate = style_headings.get(block.id)
+                    if candidate:
+                        level = candidate.get('depth_rank_candidate') or 1
+                        source = 'auto_style'
+                        evidence = dict(candidate, classification='heuristic', rule='style_cluster')
                 cell = cells.get(block.parent_id)
                 if (pending is not None and cell is not None and block.parent_id in empty_cells
                         and pending[1][:2] == cell[:2]
@@ -190,9 +267,13 @@ class HeadingBuilder:
                 pending = None
             block.heading_id = stack[-1].id
         if self.auto_detect:
-            document.metadata["heading_configuration"] = "Explicit OUTLINE with automatic style heuristics"
+            document.metadata["heading_configuration"] = "Explicit OUTLINE, style names and document style clustering"
             document.diagnostics.append({
                 "severity": "info", "code": "automatic_headings",
                 "count": sum(node.source == "auto_style" for node in document.headings),
                 "message": "Style-based titles and levels are heuristic; unstyled titles may be missed.",
             })
+        # Heading display text is normalized; extracted TextBlock.text stays lossless.
+        for node in document.headings:
+            node.title = compact_title(node.title)
+            node.path_titles = [compact_title(text) for text in node.path_titles]
