@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wsu-document-parser"
+version = "0.1.0"
+description = "HWPX, DOCX, XLSX and PDF parsers with the WsuRagDocumentAssistant DocumentModel contract"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["defusedxml==0.7.1", "pdfplumber==0.11.9", "pypdf[image,crypto]==6.10.0"]
+
+[project.optional-dependencies]
+ocr = ["paddlepaddle==3.2.0", "paddleocr==3.3.0", "paddlex[ocr-core]==3.3.13"]
+
+[project.scripts]
+document-parse = "document_parser.__main__:main"
+hwpx-parse = "hwpx_parser.__main__:main"
+docx-parse = "docx_parser.__main__:main"
+xlsx-parse = "xlsx_parser.__main__:main"
+pdf-parse = "pdf_parser.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["document_parser*", "hwpx_parser*", "docx_parser*", "xlsx_parser*", "pdf_parser*"]

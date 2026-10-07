@@ -1,0 +1,12 @@
+.venv/
+.reference/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+output/
+doc/
+graphify-out/
+.graphify_cache/
+.cache/

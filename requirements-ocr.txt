@@ -1,0 +1,4 @@
+# Optional PP-OCRv5 CPU runtime; models download lazily to .cache/paddlex.
+paddlepaddle==3.2.0
+paddleocr==3.3.0
+paddlex[ocr-core]==3.3.13
