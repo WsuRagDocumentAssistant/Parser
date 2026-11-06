@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -10,10 +11,21 @@ from .semantics import numeric_verdict, restore_heading_paths
 from hwpx_parser.headings import compact_title, is_title_text
 
 
+# Resource budgets for the semantic stage, which runs after the backend parsers' own deadlines.
+# Small inputs could previously expand into gigabytes (merged-cell or shared-string repetition) or
+# spend unbounded CPU here; these limits bound output size and time regardless of input shape.
+SEMANTIC_TIMEOUT_SECONDS = 120          # whole adaptation stage (table analysis + Markdown)
+MAX_TABLE_MARKDOWN_CHARS = 2_000_000    # one table's rendered Markdown before falling back
+MAX_TABLE_ANALYSIS_CHARS = 2_000_000    # total cell text a table may have to get hierarchy analysis
+MAX_DOCUMENT_MARKDOWN_CHARS = 50_000_000  # all tables' Markdown in one document
+
+
 class ModelAdapter:
     """Map extracted structure to the contract read by RagModuls.chunk()."""
 
-    def __init__(self, document):
+    def __init__(self, document, timeout_seconds=SEMANTIC_TIMEOUT_SECONDS):
+        self.deadline = time.monotonic() + timeout_seconds
+        self._markdown_chars = 0
         self.document = document
         self.blocks = {b.id: b for b in document.blocks}
         self.headings = {h.id: h for h in document.headings if h.id != "root"}
@@ -44,6 +56,10 @@ class ModelAdapter:
         }
         self.heading_by_block = {self.heading_ids[h.id]: h for h in self.headings.values()}
 
+    def check_deadline(self):
+        if time.monotonic() > self.deadline:
+            raise TimeoutError("Semantic analysis exceeded the time limit")
+
     def image_ref(self, asset_id):
         image = self.images.get(asset_id)
         return ImageRef(image.ref, image.path, image.media_type) if image else None
@@ -56,6 +72,7 @@ class ModelAdapter:
     def table(self, block):
         if block.id in self._tables:
             return self._tables[block.id]
+        self.check_deadline()
         cells, nested = [], []
         for cell in block.cells:
             members = [self.blocks[ident] for ident in cell.block_ids if ident in self.blocks]
@@ -88,7 +105,10 @@ class ModelAdapter:
                    repeat_header=block.metadata.get('attributes', {}).get('repeatHeader'))
         # ponytail: huge sparse XLSX ranges retain addresses; analyze after partitioning if needed.
         sparse = self.document.metadata.get('format') == 'xlsx' and block.rows * block.columns > 100_000
-        if sparse:
+        # Hierarchy analysis joins and scans every cell's text several times; a table whose cells carry
+        # huge text (e.g. one large XLSX shared string referenced by thousands of cells) is kept as a
+        # plain data table instead of materialising those joins.
+        if sparse or sum(len(c.text) for c in cells) > MAX_TABLE_ANALYSIS_CHARS:
             hierarchy = {'table_type': 'data_table'}
         else:
             if block.rows * block.columns > 1_000_000:
@@ -126,6 +146,10 @@ class ModelAdapter:
         verdict = numeric_verdict(cells, table_type, header)
         markdown = self.table_markdown(cells, block.rows, block.columns,
                                        header.header_rows if header else [], sparse=sparse)
+        self._markdown_chars += len(markdown or "")
+        if self._markdown_chars > MAX_DOCUMENT_MARKDOWN_CHARS:
+            raise ValueError("Document tables exceed the rendered Markdown size limit")
+        self.check_deadline()
         # The existing chunker reads only the outer table's markdown, not children.
         for child in nested:
             if child.markdown:
@@ -146,18 +170,38 @@ class ModelAdapter:
 
     @staticmethod
     def table_markdown(cells, rows=None, cols=None, header_rows=(), *, sparse=False):
+        """Grid Markdown; merged text repeats in every covered slot so each column keeps its label.
+
+        Repetition is charged before rendering: if it would exceed MAX_TABLE_MARKDOWN_CHARS, merged
+        text is written once at its origin; if even that exceeds the budget, the sparse cell list is
+        used. Previously a single merged cell could expand a ~100 KB file into tens of gigabytes.
+        """
         if not cells:
             return None
         rows = rows if rows is not None else max(c.row + c.row_span for c in cells)
         cols = cols if cols is not None else max(c.col + c.col_span for c in cells)
         def escape(value):
             return value.replace('\\', '\\\\').replace('|', '\\|').replace('\r', ' ').replace('\n', '<br>')
+        once = False
         if not sparse:
             if rows * cols > 1_000_000:
                 raise ValueError('Table grid is too large to render')
+            texts = [escape(cell.text) for cell in cells]
+            framing = rows * (cols * 3 + 2)
+            repeated = framing + sum(
+                len(text) * max(0, min(rows, c.row + c.row_span) - c.row)
+                * max(0, min(cols, c.col + c.col_span) - c.col)
+                for c, text in zip(cells, texts))
+            if repeated > MAX_TABLE_MARKDOWN_CHARS:
+                once = True
+                sparse = framing + sum(map(len, texts)) > MAX_TABLE_MARKDOWN_CHARS
+        if not sparse:
             grid = [[''] * cols for _ in range(rows)]
-            for cell in cells:
-                text = escape(cell.text)
+            for cell, text in zip(cells, texts):
+                if once:
+                    if cell.row < rows and cell.col < cols:
+                        grid[cell.row][cell.col] = text
+                    continue
                 for row in range(cell.row, min(rows, cell.row + cell.row_span)):
                     for col in range(cell.col, min(cols, cell.col + cell.col_span)):
                         grid[row][col] = text
@@ -225,6 +269,7 @@ class ModelAdapter:
         self.heading_by_block = {self.heading_ids[h.id]: h for h in self.headings.values()}
         emitted = set()
         for source in self.document.blocks:
+            self.check_deadline()
             # Cell text/images/nested tables are owned by Table.cells, not repeated in body.
             if source.id in self.in_cells:
                 continue

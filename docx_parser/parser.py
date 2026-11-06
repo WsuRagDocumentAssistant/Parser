@@ -395,11 +395,14 @@ class _Reader:
         nodes = list(self.selected(element, shallow_textboxes=True))
         floating = any(tag(e) == "wp:anchor" for e in nodes)
         images = [(i, e) for i, e in enumerate(nodes) if tag(e) in {"a:blip", "v:imagedata"}]
+        # One record shared by every image of the drawing. Recording the whole drawing per image
+        # made memory grow with images x drawing size (quadratic for drawings with many pictures).
+        drawing_record = record(element) if images else None
         for index, image in images:
             rid = attr(image, "embed", "r") or attr(image, "link", "r") or attr(image, "id", "r")
             relation = self.package.relationships(self.file).get(rid)
             block = self.new(ImageBlock, "image", parent.id, scope, f"{path}/image/{index}", image,
-                             metadata={"relationship_id": rid, "drawing": record(element), "floating": floating})
+                             metadata={"relationship_id": rid, "drawing": drawing_record, "floating": floating})
             block.location = self.location(scope, {self.page}, floating=floating)
             parent.content.append({"kind": "image", "block_id": block.id, "offset": offset})
             if not self.package.is_relation(relation, "image"):

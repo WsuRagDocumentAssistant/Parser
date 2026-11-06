@@ -14,6 +14,10 @@ if TYPE_CHECKING:
     from .models import Document
 
 
+# Upper bound on bytes written for one document's images.
+MAX_EXPORTED_IMAGE_BYTES = 500 * 1024 * 1024
+
+
 class DocumentExporter:
     def __init__(self, document: Document) -> None:
         self.document = document
@@ -95,14 +99,25 @@ class DocumentExporter:
             raise ValueError("Refusing images directory symlink")
         extensions = {"image/png": ".png", "image/jpeg": ".jpg", "image/jpg": ".jpg", "image/gif": ".gif",
                       "image/bmp": ".bmp", "image/tiff": ".tiff", "image/svg+xml": ".svg"}
+        # Many manifest IDs may point at one package member; write each distinct file once and stop
+        # adding new files past MAX_EXPORTED_IMAGE_BYTES (identical content keeps its existing path).
+        written, files, total = {}, set(), 0
         for asset in self.document.assets:
             data = self.document._asset_bytes.get(asset["id"])
             if data is None or not asset["media_type"].startswith("image/"):
                 continue
-            digest = hashlib.sha256(data).hexdigest()
-            relative = "images/" + digest + extensions.get(asset["media_type"], ".bin")
-            atomic_write(root / relative, data)
-            asset["output_path"] = relative
+            key = (id(data), len(data))
+            if key not in written:
+                if total + len(data) > MAX_EXPORTED_IMAGE_BYTES:
+                    continue
+                digest = hashlib.sha256(data).hexdigest()
+                relative = "images/" + digest + extensions.get(asset["media_type"], ".bin")
+                if relative not in files:
+                    atomic_write(root / relative, data)
+                    files.add(relative)
+                    total += len(data)
+                written[key] = relative
+            asset["output_path"] = written[key]
 
     def export_readable(self, root: Path, grouped: dict, headings: list[dict]) -> None:
         text_lines = []

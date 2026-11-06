@@ -207,7 +207,9 @@ class HeadingBuilder:
                         and heading.get('type') not in {'NUMBER', 'BULLET', 'OUTLINE'}):
                     candidate = style_headings.get(block.id)
                     if candidate:
-                        level = candidate.get('depth_rank_candidate') or 1
+                        # Same 1..100 bound as explicit/named levels. Unbounded style-cluster ranks let
+                        # a linear document build quadratic ancestor paths (each node copies its path).
+                        level = min(candidate.get('depth_rank_candidate') or 1, 100)
                         source = 'auto_style'
                         evidence = dict(candidate, classification='heuristic', rule='style_cluster')
                 cell = cells.get(block.parent_id)

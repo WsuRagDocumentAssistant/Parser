@@ -9,7 +9,33 @@ from hwpx_parser.headings import compact_title, is_title_text
 ROMAN = re.compile(r'^(?:[Ⅰ-Ⅻ]+|[IVXLCDM]+)(?:\s*[-–]\s*\d+)*[.)]?\s+\S')
 NUMBERED = re.compile(r'^(\d+(?:[.-]\d+)*)(?:[.)])?\s+\S')
 HANGUL = re.compile(r'^[가나다라마바사아자차카타파하][.)]\s+\S')
-TOC = re.compile(r'^(.+?)\s*[.·…]{2,}\s*(\d+)\s*$')
+_LEADERS = '.·…'
+TOC_MAX_CHARS = 500
+
+
+def toc_entry(text):
+    r"""목차 줄("제목 ...... 12")이면 제목, 아니면 None. 정규식 대신 끝에서부터 한 번 훑는다.
+
+    예전 정규식 ^(.+?)\s*[.·…]{2,}\s*(\d+)\s*$ 는 제목 끝 자리를 정할 때마다 점선 부분을 다시
+    훑어, 쪽번호가 없는 긴 "A......X" 문단에서 제곱 시간이 걸렸다(ReDoS). 목차 줄은 길지 않으므로
+    TOC_MAX_CHARS 를 넘으면 보지 않는다.
+    """
+    text = text.rstrip()
+    if len(text) > TOC_MAX_CHARS:
+        return None
+    end = len(text)
+    while end and text[end - 1].isdecimal():          # 정규식 \d 와 같은 범위
+        end -= 1
+    if end == len(text):
+        return None                                    # 쪽번호 없음
+    end = len(text[:end].rstrip())
+    leaders = end
+    while leaders and text[leaders - 1] in _LEADERS:
+        leaders -= 1
+    if end - leaders < 2:
+        return None                                    # 점선 2개 이상
+    title = text[:leaders].strip()
+    return title or None
 NUMBER = re.compile(r'^\(?\d[\d.,]*\s*(?:명|건|개|원|점|시간|회|위|억원|백만원|천원|%|％|배|일|년|월|주|시|분|초|㎡|km|kg|톤|권|매|팀|과목|학점|주차)?\)?$')
 ITEM_NUMBER = re.compile(r'^[\dⅠ-Ⅻ]+\s*[-·.]\s*\d+(?:[-·.]\d+)*$')
 
@@ -70,8 +96,7 @@ def restore_heading_paths(model, *, inferred_ids=()):
         entries = []
         for cell in block.table.cells:
             for paragraph in cell.paragraphs:
-                if match := TOC.fullmatch(paragraph.strip()):
-                    text = match[1].strip()
+                if text := toc_entry(paragraph.strip()):
                     entries.append(TocEntry(text, outline_depth(text) or 0))
         if len(entries) >= 2:
             block.role = '목차'

@@ -15,6 +15,10 @@ class XlsxParseError(ValueError):
     pass
 
 
+# Total namespace-scope entries an XML part may create (declarations x nesting copies).
+MAX_NAMESPACE_ENTRIES = 200_000
+
+
 @dataclass(frozen=True)
 class ParseLimits:
     max_file_bytes: int = 100 * 1024 * 1024
@@ -161,7 +165,7 @@ class Package:
         try:
             depth = 0
             # Enforce depth/node limits during parsing, before building recursive records.
-            namespaces, pending, stack = {}, [], []
+            namespaces, pending, stack, copied = {}, [], [], 0
             parser = XML.iterparse(BytesIO(self.read(name)), events=("start", "end", "start-ns"),
                                    forbid_dtd=True, forbid_entities=True, forbid_external=True)
             for event, item in parser:
@@ -172,9 +176,16 @@ class Package:
                     self.nodes += 1
                     if depth > self.limits.max_depth or self.nodes > self.limits.max_nodes:
                         raise XlsxParseError(f"XML depth/node limit exceeded: {name}")
-                    scope = dict(stack[-1]) if stack else {}
-                    scope.update(pending)
-                    pending.clear()
+                    # Share the parent scope unless this element declares namespaces. Copying the whole
+                    # scope at every element (and keeping each mc:Choice copy) multiplied memory by the
+                    # number of declarations; copied entries are now counted against a budget.
+                    scope = stack[-1] if stack else {}
+                    if pending:
+                        scope = {**scope, **dict(pending)}
+                        copied += len(scope)
+                        if copied > MAX_NAMESPACE_ENTRIES:
+                            raise XlsxParseError(f"XML namespace declaration limit exceeded: {name}")
+                        pending.clear()
                     stack.append(scope)
                     if tag(item) == "mc:Choice":
                         namespaces[id(item)] = scope

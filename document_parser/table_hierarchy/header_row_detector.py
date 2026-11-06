@@ -16,8 +16,11 @@ from .cell_utils import _avg_len, normalize_text
 from .keyword_config import get_keyword_config
 from .table_utils import get_table_size
 
+# 길이 제한 없는 \d+ 앞에는 (?<!\d) 를 둔다 — 숫자열 중간에서 시작하지 않게. 없으면 긴 숫자열에서
+# 시작 자리마다 \d+ 를 다시 훑어 제곱 시간이 걸렸다(ReDoS). 숫자열 처음에서 시작한 매치가 언제나
+# 같이 있으므로 search 결과(있다/없다)는 그대로다.
 _DATA_PATTERN = re.compile(
-    r"(\d{4}\s*[.\-/년]\s*\d{1,2}|\d{1,4}[.\-/]\d{1,2}([.\-/]\d{1,4})?|\d+(\.\d+)?\s*%|\d+\s*(원|건|명|개))"
+    r"(\d{4}\s*[.\-/년]\s*\d{1,2}|\d{1,4}[.\-/]\d{1,2}([.\-/]\d{1,4})?|(?<!\d)\d+(\.\d+)?\s*%|(?<!\d)\d+\s*(원|건|명|개))"
 )
 _NUMERIC_PATTERN = re.compile(r"^[+-]?\d{1,3}(,\d{3})*(\.\d+)?$|^[+-]?\d+(\.\d+)?$")
 

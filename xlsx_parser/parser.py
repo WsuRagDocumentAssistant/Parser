@@ -380,13 +380,15 @@ class _Reader:
         drawing_relations = self.package.relationships(drawing_file)
         for index, anchor in enumerate(root):
             pictures = [e for e in anchor.iter() if tag(e) == "xdr:pic"]
+            # Shared by the anchor's pictures (see DocxParser.drawing): one copy, not one per picture.
+            anchor_record = record(anchor) if pictures else None
             for picture_index, picture in enumerate(pictures):
                 blip = next((e for e in picture.iter() if tag(e) == "a:blip"), None)
                 rid = attr(blip, "embed") or attr(blip, "link")
                 image_relation = drawing_relations.get(rid)
                 block = self.new(ImageBlock, "image", parent=parent,
                                  source={"file": drawing_file, "xml_path": f"anchor/{index}/pic/{picture_index}"},
-                                 metadata={"anchor": record(anchor), "relationship": image_relation})
+                                 metadata={"anchor": anchor_record, "relationship": image_relation})
                 if not self.package.is_relation(image_relation, "image"):
                     self.diagnostic("missing_image_reference", block.source_ref)
                     continue

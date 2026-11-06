@@ -17,7 +17,7 @@ from .header_row_detector import _DATA_PATTERN, _is_numeric_like, is_key_value_l
 from .keyword_config import get_keyword_config
 
 _VALUE_MARKS = frozenset({"-", "O", "X", "o", "x", "△", "▲", "✓", "ㅇ", "ㅁ"})
-_UNIT_VALUE_PATTERN = re.compile(r"\d+\s*(건|명|점|원|천원|만원|개|회|년|월|일)")
+_UNIT_VALUE_PATTERN = re.compile(r"(?<!\d)\d+\s*(건|명|점|원|천원|만원|개|회|년|월|일)")  # (?<!\d): _DATA_PATTERN 설명 참고
 
 _INDEX_HEADER_KEYWORDS = frozenset({"번호", "순번", "No.", "No", "NO", "연번"})
 _CODE_HEADER_KEYWORDS = frozenset({"코드", "ID", "Code", "기호"})
